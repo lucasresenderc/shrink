@@ -52,7 +52,7 @@ def generate_sample(n_trials, n, a, r, seed=1):
 
 def task(params):
     n, delta, ((tail, skew), distribution) = params
-    n_trials = 100000
+    n_trials = 10000 # change here to improve
     X = generate_sample(n_trials, n, tail, skew)
     estimates = []
     ns = []
@@ -75,18 +75,18 @@ def task(params):
 
     return ns, methods, estimates, deltas, distributions
 
-range_ns = [n for n in range(50,500,25)]
-range_deltas = np.exp(-np.linspace(1,6,24))
-range_ts = [(np.inf, 0), (np.inf, .9), (.605, 0), (.605, .9), (1.005, 0), (1.005, .9)]
-range_distributions = ["Gaussian", "Skewed Gaussian", "St df=1.21", "Skewed St df=1.21", "St df=2.01",  "Skewed St df=2.01"]
+# range_ns = [n for n in range(50,500,25)]
+# range_deltas = np.exp(-np.linspace(1,6,24))
+# range_ts = [(np.inf, 0), (np.inf, .9), (.605, 0), (.605, .9), (1.005, 0), (1.005, .9)]
+# range_distributions = ["Gaussian", "Skewed Gaussian", "St df=1.21", "Skewed St df=1.21", "St df=2.01",  "Skewed St df=2.01"]
 
-# range_ns = [n for n in range(50,500,100)]
-# range_deltas = np.exp(-np.linspace(1,7,6))
-# range_ts = [(np.inf, 0), (1.005, 0)]
-# range_distributions = ["Gaussian", "St df=2.01"]
+range_ns = [n for n in range(50,500,50)]
+range_deltas = [.1, .01, .001]
+range_ts = [(np.inf, 0), (1.005, 0)]
+range_distributions = ["Gaussian", "St df=2.01"]
 
 loop_n = len(range_ns)*len(range_deltas)*len(range_ts)*len(range_distributions)
-ret = Parallel(n_jobs = 24)(delayed(task)(params) for params in tqdm(product(range_ns, range_deltas, zip(range_ts, range_distributions)), total=loop_n))
+ret = Parallel(n_jobs = 8)(delayed(task)(params) for params in tqdm(product(range_ns, range_deltas, zip(range_ts, range_distributions)), total=loop_n))
 
 df = [pd.DataFrame({'n': r[0], 'method': r[1], 'estimate': r[2], 'delta': r[3], 'distribution': r[4]}) for r in ret]
 df = pd.concat(df)
