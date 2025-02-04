@@ -61,28 +61,30 @@ def task(params):
     distributions = []
 
     estimates += [get_tm(v, int(np.ceil(np.log(1/delta)))) for v in X]
-    for _ in range(2):
-        estimates += [get_mean(v, kappa, rho_win, np.log(1/delta), 1) for v, kappa in zip(X, estimates[-n_trials:])]
-    methods += n_trials*['tm'] + n_trials*['tm win'] + n_trials*['tm 2x win']
+    estimates += [get_mean(v, kappa, rho_win, np.log(1/delta), 1) for v, kappa in zip(X, estimates[-n_trials:])]
+    estimates += [get_mean(v, kappa, rho_atm, np.log(1/delta), 1) for v, kappa in zip(X, estimates[-n_trials:])]
+    estimates += [get_mean(v, kappa, rho_lv, np.log(1/delta), 1) for v, kappa in zip(X, estimates[-n_trials:])]
+    methods += n_trials*['tm'] + n_trials*['tm win'] + n_trials*['tm atm'] + n_trials*['tm lv']
     
     estimates += [np.mean(v) for v in X]
-    for _ in range(2):
-        estimates += [get_mean(v, kappa, rho_win, np.log(1/delta), 1) for v, kappa in zip(X, estimates[-n_trials:])]
-    methods += n_trials*['mean'] + n_trials*['mean win'] + n_trials*['mean 2x win']
+    estimates += [get_mean(v, kappa, rho_win, np.log(1/delta), 1) for v, kappa in zip(X, estimates[-n_trials:])]
+    estimates += [get_mean(v, kappa, rho_atm, np.log(1/delta), 1) for v, kappa in zip(X, estimates[-n_trials:])]
+    estimates += [get_mean(v, kappa, rho_lv, np.log(1/delta), 1) for v, kappa in zip(X, estimates[-n_trials:])]
+    methods += n_trials*['mean'] + n_trials*['mean win'] + n_trials*['mean atm'] + n_trials*['mean lv']
 
-    ns += 6*n_trials*[n]
-    deltas += 6*n_trials*[delta]
-    distributions += 6*n_trials*[distribution]
+    ns += 8*n_trials*[n]
+    deltas += 8*n_trials*[delta]
+    distributions += 8*n_trials*[distribution]
 
     return ns, methods, estimates, deltas, distributions
 
-range_ns = [n for n in range(50,500,50)]
+range_ns = [50, 500]
 range_deltas = [.1, .01, .001]
 range_ts = [(np.inf, 0), (1.005, 0)]
 range_distributions = ["Gaussian", "St df=2.01"]
 
-loop_n = len(range_ns)*len(range_deltas)*len(range_ts)*len(range_distributions)
-ret = Parallel(n_jobs = 24)(delayed(task)(params) for params in tqdm(product(range_ns, range_deltas, zip(range_ts, range_distributions)), total=loop_n))
+loop_n = len(range_ns)*len(range_deltas)*len(range_ts)
+ret = Parallel(n_jobs = 8)(delayed(task)(params) for params in tqdm(product(range_ns, range_deltas, zip(range_ts, range_distributions)), total=loop_n))
 
 df = [pd.DataFrame({'n': r[0], 'method': r[1], 'estimate': r[2], 'delta': r[3], 'distribution': r[4]}) for r in ret]
 df = pd.concat(df)
