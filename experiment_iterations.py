@@ -60,16 +60,18 @@ def task(params):
     deltas = []
     distributions = []
 
+    p = 2*tail - 0.01 if tail <= 1 else 2
+
     estimates += [get_tm(v, int(np.ceil(np.log(1/delta)))) for v in X]
     estimates += [get_mean(v, kappa, rho_win, np.log(1/delta), 1) for v, kappa in zip(X, estimates[-n_trials:])]
     estimates += [get_mean(v, kappa, rho_atm, np.log(1/delta), 1) for v, kappa in zip(X, estimates[-n_trials:])]
-    estimates += [get_mean(v, kappa, rho_lv, np.log(1/delta), 2) for v, kappa in zip(X, estimates[-n_trials:])]
+    estimates += [get_mean(v, kappa, rho_lv, np.log(1/delta), p) for v, kappa in zip(X, estimates[-n_trials:])]
     methods += n_trials*['tm'] + n_trials*['tm win'] + n_trials*['tm atm'] + n_trials*['tm lv']
     
     estimates += [np.mean(v) for v in X]
     estimates += [get_mean(v, kappa, rho_win, np.log(1/delta), 1) for v, kappa in zip(X, estimates[-n_trials:])]
     estimates += [get_mean(v, kappa, rho_atm, np.log(1/delta), 1) for v, kappa in zip(X, estimates[-n_trials:])]
-    estimates += [get_mean(v, kappa, rho_lv, np.log(1/delta), 2) for v, kappa in zip(X, estimates[-n_trials:])]
+    estimates += [get_mean(v, kappa, rho_lv, np.log(1/delta), p) for v, kappa in zip(X, estimates[-n_trials:])]
     methods += n_trials*['mean'] + n_trials*['mean win'] + n_trials*['mean atm'] + n_trials*['mean lv']
 
     ns += 8*n_trials*[n]
