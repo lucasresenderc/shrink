@@ -44,6 +44,13 @@ rho_win = lambda x : 1*(x < 1) + (x >= 1)/(x+.000001)
 # lee and valiant
 rho_lv = lambda x : (1 - x)*(x < 1)
 
+# personalized choices
+rho_exp = lambda x : np.exp(-x)
+
+# works only if p >= 2
+rho_half = lambda x : 1*(x<.25) + (x < 1) * (x > .25) * (1-x) * 4/3
+rho_third = lambda x : 1*(x<1/9) + (x < 1) * (x > 1/9) * (1-x) * 9/8
+rho_quarter = lambda x : 1*(x<1/16) + (x < 1) * (x > 1/16) * (1-x) * 16/15
 
 def generate_sample(n_trials, n, a, r, seed=1):
     rng = np.random.default_rng(seed)
@@ -67,11 +74,16 @@ def task(params):
 
     p = 2*tail - 0.01 if tail <= 1 else 2
     estimates += [get_mean(v[n//2:], np.mean(v[:n//2]), rho_lv, np.log(1/delta), p) for v in X]
+    estimates += [get_mean(v[n//2:], np.mean(v[:n//2]), rho_exp, np.log(1/delta), p) for v in X]
+    estimates += [get_mean(v[n//2:], np.mean(v[:n//2]), rho_half, np.log(1/delta), p) for v in X]
+    estimates += [get_mean(v[n//2:], np.mean(v[:n//2]), rho_third, np.log(1/delta), p) for v in X]
+    estimates += [get_mean(v[n//2:], np.mean(v[:n//2]), rho_quarter, np.log(1/delta), p) for v in X]
 
     methods += n_trials*['mean'] + n_trials*['tm'] + n_trials*['mom'] + n_trials*['atm'] + n_trials*['win'] + n_trials*['lv']
-    ns += 6*n_trials*[n]
-    deltas += 6*n_trials*[delta]
-    distributions += 6*n_trials*[distribution]
+    methods += n_trials*['exp'] + n_trials*['half'] + n_trials*['third'] + n_trials*['quarter']
+    ns += 10*n_trials*[n]
+    deltas += 10*n_trials*[delta]
+    distributions += 10*n_trials*[distribution]
 
     return ns, methods, estimates, deltas, distributions
 
@@ -85,7 +97,7 @@ range_deltas = [.1, .01, .001]
 range_ts = [(np.inf, 0), (1.005, 0)]
 range_distributions = ["Gaussian", "St df=2.01"]
 
-loop_n = len(range_ns)*len(range_deltas)*len(range_ts)*len(range_distributions)
+loop_n = len(range_ns)*len(range_deltas)*len(range_ts)
 ret = Parallel(n_jobs = 8)(delayed(task)(params) for params in tqdm(product(range_ns, range_deltas, zip(range_ts, range_distributions)), total=loop_n))
 
 df = [pd.DataFrame({'n': r[0], 'method': r[1], 'estimate': r[2], 'delta': r[3], 'distribution': r[4]}) for r in ret]

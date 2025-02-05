@@ -45,6 +45,15 @@ rho_win = lambda x : 1*(x < 1) + (x >= 1)/(x+.000001)
 rho_lv = lambda x : (1 - x)*(x < 1)
 
 
+# personalized choices
+rho_exp = lambda x : np.exp(-x)
+
+# works only if p >= 2
+rho_half = lambda x : 1*(x<.25) + (x < 1) * (x > .25) * (1-x) * 4/3
+rho_third = lambda x : 1*(x<1/9) + (x < 1) * (x > 1/9) * (1-x) * 9/8
+rho_quarter = lambda x : 1*(x<1/16) + (x < 1) * (x > 1/16) * (1-x) * 16/15
+
+
 def generate_sample(n_trials, n, a, r, seed=1):
     rng = np.random.default_rng(seed)
     dist = SkeGTD(a=a, r=r, rng=rng)
@@ -66,17 +75,27 @@ def task(params):
     estimates += [get_mean(v, kappa, rho_win, np.log(1/delta), 1) for v, kappa in zip(X, estimates[-n_trials:])]
     estimates += [get_mean(v, kappa, rho_atm, np.log(1/delta), 1) for v, kappa in zip(X, estimates[-n_trials:])]
     estimates += [get_mean(v, kappa, rho_lv, np.log(1/delta), p) for v, kappa in zip(X, estimates[-n_trials:])]
+    estimates += [get_mean(v, kappa, rho_exp, np.log(1/delta), p) for v, kappa in zip(X, estimates[-n_trials:])]
+    estimates += [get_mean(v, kappa, rho_half, np.log(1/delta), p) for v, kappa in zip(X, estimates[-n_trials:])]
+    estimates += [get_mean(v, kappa, rho_third, np.log(1/delta), p) for v, kappa in zip(X, estimates[-n_trials:])]
+    estimates += [get_mean(v, kappa, rho_quarter, np.log(1/delta), p) for v, kappa in zip(X, estimates[-n_trials:])]
     methods += n_trials*['tm'] + n_trials*['tm win'] + n_trials*['tm atm'] + n_trials*['tm lv']
+    methods += n_trials*['tm exp'] + n_trials*['tm half'] + n_trials*['tm third'] + n_trials*['tm quarter']
     
     estimates += [np.mean(v) for v in X]
     estimates += [get_mean(v, kappa, rho_win, np.log(1/delta), 1) for v, kappa in zip(X, estimates[-n_trials:])]
     estimates += [get_mean(v, kappa, rho_atm, np.log(1/delta), 1) for v, kappa in zip(X, estimates[-n_trials:])]
     estimates += [get_mean(v, kappa, rho_lv, np.log(1/delta), p) for v, kappa in zip(X, estimates[-n_trials:])]
+    estimates += [get_mean(v, kappa, rho_exp, np.log(1/delta), p) for v, kappa in zip(X, estimates[-n_trials:])]
+    estimates += [get_mean(v, kappa, rho_half, np.log(1/delta), p) for v, kappa in zip(X, estimates[-n_trials:])]
+    estimates += [get_mean(v, kappa, rho_third, np.log(1/delta), p) for v, kappa in zip(X, estimates[-n_trials:])]
+    estimates += [get_mean(v, kappa, rho_quarter, np.log(1/delta), p) for v, kappa in zip(X, estimates[-n_trials:])]
     methods += n_trials*['mean'] + n_trials*['mean win'] + n_trials*['mean atm'] + n_trials*['mean lv']
+    methods += n_trials*['mean exp'] + n_trials*['mean half'] + n_trials*['mean third'] + n_trials*['mean quarter']
 
-    ns += 8*n_trials*[n]
-    deltas += 8*n_trials*[delta]
-    distributions += 8*n_trials*[distribution]
+    ns += 16*n_trials*[n]
+    deltas += 16*n_trials*[delta]
+    distributions += 16*n_trials*[distribution]
 
     return ns, methods, estimates, deltas, distributions
 
