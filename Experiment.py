@@ -7,31 +7,41 @@ from distributions import SkeGTD
 from functools import partial
 import polars as pl
 
-CONTAMINATION = 1e9
+CONTAMINATION = 1e6
 
 
 def get_tm(X, k):
+    assert 2*k < X.size
     return np.mean(np.sort(X)[k:-k])
 
 
 def get_mom(X, K):
     block_len = X.size // K
+    assert block_len > 0
     return np.median([np.mean(X[i*block_len:(i+1)*block_len]) for i in range(K)])
 
 
 base_estimators_dict = {
-    "mean": lambda X, delta: np.mean(X),
-    "median": lambda X, delta: np.median(X),
-    "mom": lambda X, delta: get_mom(X, int(np.ceil(np.log(1/delta)))),
-    "tm": lambda X, delta: get_tm(X, int(np.ceil(np.log(1/delta)))),
+    "mean": lambda X, delta, eps: np.mean(X),
+    "median": lambda X, delta, eps: np.median(X),
+    "mom": lambda X, delta, eps: get_mom(X, int(np.ceil(np.log(1/delta))+2*eps*len(X))),
+    "tm": lambda X, delta, eps: get_tm(X, int(np.ceil(np.log(1/delta))+eps*len(X))),
 }
 
 shrinkage_functions_dict = {
     "lv": lambda t, p: (1 - t**p)*(t <= 1),
     "atm": lambda t, p: 1*(t <= 1),
-    "win": lambda t, p: 1*(t <= 1) + (t > 1)/t,
+    "win": lambda t, p: 1*(t <= 1) + np.nan_to_num((t > 1)/t),
     "exp": lambda t, p: np.exp(-t**p),
     "inv": lambda t, p: 1/(t**p + 1),
+}
+
+tolerance_dict = {
+    "lv": 0.1,
+    "atm": 1.1,
+    "win": 0.1,
+    "exp": 0.1,
+    "inv": 0.1,
 }
 
 
@@ -40,11 +50,16 @@ def fetch_moment(sample_dist):
     return 2*a-0.0001 if a <= 1 else 2
 
 
-def est_func(base_est, w, sym, norm, delta, c_eta, split, x, p, contamination_level, tol=1e-6):
+def est_func(base_est, w, sym, norm, delta, c_eta, split, x, p, contamination_level, tol=1e-10):
     if split is None or w is None:
-        kappa = base_estimators_dict[base_est](x, delta)
+        kappa = base_estimators_dict[base_est](
+            x, delta, contamination_level)
     else:
-        kappa = base_estimators_dict[base_est](x[:int(len(x)*split)], delta)
+        base_est_x = x[:int(len(x)*split)]
+        kappa = base_estimators_dict[base_est](
+            base_est_x, delta, contamination_level)
+    assert kappa is not None
+    assert np.isfinite(kappa)
     if w is None:
         return kappa
     else:
@@ -59,48 +74,73 @@ def est_func(base_est, w, sym, norm, delta, c_eta, split, x, p, contamination_le
         if not sym:
             eta = c_eta * np.log(1/delta) + contamination_level * n
             D = np.abs(shrink_x-kappa)
+            if w != "atm":
+                # we start finding an upper and a lower bound
+                a = 0
+                A = eta/n
+                while np.sum(w_func(A * D)) > n - eta:
+                    a, A = A, 2*A
 
-            # we start finding an upper and a lower bound
-            a = 0
-            A = eta/n
-            while np.sum(w_func(A * D)) > n - eta:
-                a, A = A, 2*A
+                # now we fit
+                new_a = (a+A)/2
+                while A - a > tol or np.sum(w_func(new_a * D)) > n - eta:
+                    if np.sum(w_func(new_a * D)) < n - eta:
+                        A = new_a
+                    else:
+                        a = new_a
+                    new_a = (a + A)/2
+                if abs(n-eta-np.sum(w_func(new_a * D))) > tolerance_dict[w]:
+                    raise ValueError(
+                        f"Did not converge properly for w={w}, sym={sym}, norm={norm}, delta={delta}, c_eta={c_eta}, split={split}, contamination_level={contamination_level}, shrink_n={n}, eta={eta}, sum_weights={np.sum(w_func(new_a * D))}, a={a}, A={A}, new_a={new_a}, sum_a={np.sum(w_func(a * D))}, sum_A={np.sum(w_func(A * D))}")
+                W = w_func(new_a * D)
 
-            # now we fit
-            while A - a > tol:
-                if np.sum(w_func((A+a)/2 * D)) < n - eta:
-                    A = (A+a)/2
-                else:
-                    a = (A+a)/2
-
-            # now get the weights
-            if norm:
-                return np.sum(shrink_x * w_func(a * D))/np.sum(w_func(a * D))
             else:
-                return kappa + np.mean((shrink_x-kappa) * w_func(a * D))
+                idx = np.argsort(D)[:int(np.floor(n - eta))]
+                W = np.zeros_like(D)
+                W[idx] = 1.0
+            if norm:
+                return np.sum(shrink_x * W)/np.sum(W)
+            else:
+                return kappa + np.mean((shrink_x-kappa) * W)
         else:
             eta = 2*c_eta * np.log(1/delta) + 2 * contamination_level * n
             D_p = (shrink_x - kappa)*(shrink_x >= kappa)
             D_n = (kappa - shrink_x)*(shrink_x < kappa)
+            assert (D_p >= 0).all()
+            assert (D_n >= 0).all()
+            assert (D_p * D_n == 0).all()
+            assert (D_p + D_n == np.abs(shrink_x - kappa)).all()
+            assert np.sum(D_p > 0) > eta/2
+            assert np.sum(D_n > 0) > eta/2
             a_p = 0
             A_p = eta/n
             while np.sum(w_func(A_p * D_p)) > n - eta/2:
                 a_p, A_p = A_p, 2*A_p
-            while A_p - a_p > tol:
-                if np.sum(w_func((A_p+a_p)/2 * D_p)) < n - eta/2:
-                    A_p = (A_p+a_p)/2
+            new_a_p = (a_p + A_p)/2
+            while A_p - a_p > tol or np.sum(w_func(new_a_p * D_p)) > n - eta/2:
+                if np.sum(w_func(new_a_p * D_p)) < n - eta/2:
+                    A_p = new_a_p
                 else:
-                    a_p = (A_p+a_p)/2
+                    a_p = new_a_p
+                new_a_p = (a_p + A_p)/2
             a_n = 0
             A_n = eta/n
             while np.sum(w_func(A_n * D_n)) > n - eta/2:
                 a_n, A_n = A_n, 2*A_n
-            while A_n - a_n > tol:
-                if np.sum(w_func((A_n+a_n)/2 * D_n)) < n - eta/2:
-                    A_n = (A_n+a_n)/2
+            new_a_n = (a_n + A_n)/2
+            while A_n - a_n > tol or np.sum(w_func(new_a_n * D_n)) > n - eta/2:
+                if np.sum(w_func(new_a_n * D_n)) < n - eta/2:
+                    A_n = new_a_n
                 else:
-                    a_n = (A_n+a_n)/2
-            W = w_func(a_p * D_p) + w_func(a_n * D_n) - 1
+                    a_n = new_a_n
+                new_a_n = (a_n + A_n)/2
+            W = w_func(new_a_p * D_p) + w_func(new_a_n * D_n) - 1
+            try:
+                assert np.isfinite(W).all()
+            except AssertionError:
+                raise ValueError(
+                    "W contains non-finite values.")
+            assert (W >= 0).all()
 
             if norm:
                 return np.sum(shrink_x * W)/np.sum(W)
@@ -109,16 +149,15 @@ def est_func(base_est, w, sym, norm, delta, c_eta, split, x, p, contamination_le
 
 
 class Experiment:
-    def generate_sample(self, sample_dist):
-        rng = np.random.default_rng(self.seed)
+    def generate_sample(self, sample_dist, rng):
         a, r, n, contamination_level = sample_dist
         dist = SkeGTD(a=a, r=r, rng=rng)
 
         X = dist.rvs((self.n_trials, n))
-        corrupted_indices = rng.choice(n, size=int(
-            contamination_level*n), replace=False
-        )
-        X[:, corrupted_indices] = CONTAMINATION
+        indices = np.tile(np.arange(n)[np.newaxis, :], (self.n_trials, 1))
+        rng.permuted(indices, axis=1)
+        corrupted_indices = indices[:, :int(np.floor(contamination_level * n))]
+        X[corrupted_indices] = CONTAMINATION
 
         return X, np.float64(dist.mean())
 
@@ -141,19 +180,20 @@ class Experiment:
         self.dist_prod = product(dist_a, dist_r, ns, contamination_level)
 
         self.n_trials = n_trials
-        self.seed = seed
         self.n_jobs = n_jobs
         self.df = None
+        self.seed = seed
 
-    @staticmethod
+    @ staticmethod
     def load_from_json(self, filename):
         specs = json.load(open(filename, "r"))
         self.metrics_df = pl.read_parquet(specs["metrics_filename"])
         self.name = specs["name"]
         self.specs_cols = specs["specs_cols"]
 
-    def run_trial(self, sample_dist):
-        X, true_mean = self.generate_sample(sample_dist)
+    def run_trial(self, sample_dist, seed):
+        rng = np.random.default_rng(seed)
+        X, true_mean = self.generate_sample(sample_dist, rng)
         base_estimates = []
         ws = []
         syms = []
@@ -208,7 +248,7 @@ class Experiment:
 
     def run(self):
         res = Parallel(n_jobs=self.n_jobs)(
-            delayed(self.run_trial)(sample_dist) for sample_dist in tqdm(self.dist_prod, total=len(self.dist_a)*len(self.dist_r)*len(self.ns)*len(self.contamination_level))
+            delayed(self.run_trial)(sample_dist, i + self.seed) for i, sample_dist in tqdm(enumerate(self.dist_prod), total=len(self.dist_a)*len(self.dist_r)*len(self.ns)*len(self.contamination_level))
         )
         dfs = [pl.DataFrame(r) for r in res]
         self.df = pl.concat(dfs)
