@@ -16,11 +16,15 @@ base_estimator_dict = OrderedDict([
 ])
 shrinkage_function_dict = OrderedDict([
     ("none", "None"),
+    ("atm", r"$w(t)=\mathbf{1}_{t<1}$"),
+    ("win", r"$w(t)=1\wedge t^{-1}$"),
+    ("lv", r"$w(t)=(1-t^p)_+$"),
     ("exp", r"$w(t)=e^{-t^p}$"),
     ("inv", r"$w(t)=(1+t^p)^{-1}$"),
-    ("win", r"$w(t)=1\wedge t^{-1}$"),
-    ("atm", r"$w(t)=\mathbf{1}_{t<1}$"),
-    ("lv", r"$w(t)=(1-t^p)_+$"),
+    ("ln", r"$w(t)=(\ln(e+t))^{-1}$"),
+    ("ln_sq", r"$w(t)=(\ln(e+t^2))^{-1}$"),
+    ("sqrt", r"$w(t)=1-\sqrt{1-(1-t)_+^2}$"),
+    ("inv_sqrt", r"$w(t)=(1+\sqrt{t})^{-1}$"),
 ])
 distribution_dict = OrderedDict([
     ("a=inf,r=0.0", "N"),
@@ -32,12 +36,22 @@ split_ratio_dict = OrderedDict([
     ("none", "No split"),
 ])
 contamination_dict = OrderedDict([])
+symmetrized_dict = OrderedDict([
+    (False, "asym"),
+    (True, "sym"),
+])
+normalized_dict = OrderedDict([
+    (False, "unnorm"),
+    (True, "norm"),
+])
 formatter_dict = {
     "base_estimator": base_estimator_dict,
     "shrinkage_function": shrinkage_function_dict,
     "distribution": distribution_dict,
     "split_ratio": split_ratio_dict,
-    "contamination_level": contamination_dict
+    "contamination_level": contamination_dict,
+    "is_symmetrized": symmetrized_dict,
+    "is_normalized": normalized_dict,
 }
 
 
