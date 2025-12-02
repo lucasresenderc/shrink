@@ -34,6 +34,11 @@ shrinkage_functions_dict = {
     "win": lambda t, p: 1*(t <= 1) + np.nan_to_num((t > 1)/t),
     "exp": lambda t, p: np.exp(-t**p),
     "inv": lambda t, p: 1/(t**p + 1),
+    # shrinkage functions that violate assumptions
+    "ln_sq": lambda t, p: 1/np.log(np.e + t**2),
+    "ln": lambda t, p: 1/np.log(np.e + t),
+    "sqrt": lambda t, p: 1 - np.sqrt(1 - np.power((1 - t)*(t < 1), 2)),
+    "inv_sqrt": lambda t, p: 1/(1 + np.sqrt(t)),
 }
 
 tolerance_dict = {
@@ -42,6 +47,10 @@ tolerance_dict = {
     "win": 0.1,
     "exp": 0.1,
     "inv": 0.1,
+    "ln": 0.1,
+    "ln_sq": 0.1,
+    "sqrt": 0.1,
+    "inv_sqrt": 0.1,
 }
 
 
@@ -50,12 +59,19 @@ def fetch_moment(sample_dist):
     return 2*a-0.0001 if a <= 1 else 2
 
 
-def est_func(base_est, w, sym, norm, delta, c_eta, split, x, p, contamination_level, tol=1e-10):
+def est_func(base_est, w, sym, norm, delta, c_eta, split, x, p, contamination_level, tol=1e-6):
     if split is None or w is None:
         kappa = base_estimators_dict[base_est](
             x, delta, contamination_level)
     else:
-        base_est_x = x[:int(len(x)*split)]
+        if isinstance(split, float):
+            split_idx = int(len(x)*split)
+        elif isinstance(split, int):
+            split_idx = split
+        else:
+            raise ValueError(
+                "Split must be either float or int.")
+        base_est_x = x[:split_idx]
         kappa = base_estimators_dict[base_est](
             base_est_x, delta, contamination_level)
     assert kappa is not None
@@ -66,7 +82,7 @@ def est_func(base_est, w, sym, norm, delta, c_eta, split, x, p, contamination_le
         if split is None:
             shrink_x = x
         else:
-            shrink_x = x[int(len(x)*split):]
+            shrink_x = x[split_idx:]
         w_func = partial(shrinkage_functions_dict[w], p=p)
         # solve alpha such that
         # n - eta - 1 < sum rho(alpha |x - kappa|^p) <= n - eta
