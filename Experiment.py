@@ -10,6 +10,19 @@ import polars as pl
 CONTAMINATION = 1e6
 
 
+def introduce_contamination(X, contamination_level, seed=0):
+    assert len(X.shape) == 1
+    rng = np.random.default_rng(seed)
+    n = X.shape[0]
+    # assume contamination is independent across rows
+    indices = np.arange(n)
+    indices = rng.permuted(indices)
+    ix = indices[:int(np.floor(contamination_level * n))]
+    result = np.copy(X)
+    result[ix] = CONTAMINATION
+    return result
+
+
 def get_tm(X, k):
     assert 2*k < X.size
     return np.mean(np.sort(X)[k:-k])
@@ -59,8 +72,10 @@ def fetch_moment(sample_dist):
     return 2*a-0.0001 if a <= 1 else 2
 
 
-def est_func(base_est, w, sym, norm, delta, c_eta, split, x, p, contamination_level, tol=1e-6):
+def est_func(base_est, w, sym, norm, delta, c_eta, split, x, p, contamination_level, tol=1e-10, seed=0):
+    seed_rng = np.random.default_rng(seed)
     if split is None or w is None:
+        x = introduce_contamination(x, contamination_level, seed)
         kappa = base_estimators_dict[base_est](
             x, delta, contamination_level)
     else:
@@ -71,7 +86,8 @@ def est_func(base_est, w, sym, norm, delta, c_eta, split, x, p, contamination_le
         else:
             raise ValueError(
                 "Split must be either float or int.")
-        base_est_x = x[:split_idx]
+        base_est_x = introduce_contamination(
+            x[:split_idx], contamination_level, seed)
         kappa = base_estimators_dict[base_est](
             base_est_x, delta, contamination_level)
     assert kappa is not None
@@ -82,7 +98,8 @@ def est_func(base_est, w, sym, norm, delta, c_eta, split, x, p, contamination_le
         if split is None:
             shrink_x = x
         else:
-            shrink_x = x[split_idx:]
+            shrink_x = introduce_contamination(
+                x[split_idx:], contamination_level, seed+1)
         w_func = partial(shrinkage_functions_dict[w], p=p)
         # solve alpha such that
         # n - eta - 1 < sum rho(alpha |x - kappa|^p) <= n - eta
@@ -95,6 +112,8 @@ def est_func(base_est, w, sym, norm, delta, c_eta, split, x, p, contamination_le
                 a = 0
                 A = eta/n
                 while np.sum(w_func(A * D)) > n - eta:
+                    if A > 1e10:
+                        np.save("debug_x.npy", shrink_x)
                     a, A = A, 2*A
 
                 # now we fit
@@ -165,16 +184,12 @@ def est_func(base_est, w, sym, norm, delta, c_eta, split, x, p, contamination_le
 
 
 class Experiment:
-    def generate_sample(self, sample_dist, rng):
+    def generate_sample(self, sample_dist, seed):
+        rng = np.random.default_rng(seed)
         a, r, n, contamination_level = sample_dist
         dist = SkeGTD(a=a, r=r, rng=rng)
 
         X = dist.rvs((self.n_trials, n))
-        indices = np.tile(np.arange(n)[np.newaxis, :], (self.n_trials, 1))
-        rng.permuted(indices, axis=1)
-        corrupted_indices = indices[:, :int(np.floor(contamination_level * n))]
-        X[corrupted_indices] = CONTAMINATION
-
         return X, np.float64(dist.mean())
 
     def __init__(self, name, base_estimators, shrinkage_function, symmetrized, normalized, deltas, c_etas, splits, dist_a, dist_r, ns, contamination_level, n_trials, seed=0, n_jobs=1):
@@ -208,8 +223,7 @@ class Experiment:
         self.specs_cols = specs["specs_cols"]
 
     def run_trial(self, sample_dist, seed):
-        rng = np.random.default_rng(seed)
-        X, true_mean = self.generate_sample(sample_dist, rng)
+        X, true_mean = self.generate_sample(sample_dist, seed)
         base_estimates = []
         ws = []
         syms = []
@@ -230,9 +244,10 @@ class Experiment:
 
         p = fetch_moment(sample_dist)
 
-        for (base_est, w, sym, norm, delta, c_eta, split) in self.est_prod:
+        for j, (base_est, w, sym, norm, delta, c_eta, split) in enumerate(self.est_prod):
+            seed_est = 2*j + seed
             estimates += [est_func(base_est, w, sym, norm,
-                                   delta, c_eta, split, v, p, contamination_level) for v in X]
+                                   delta, c_eta, split, v, p, contamination_level, seed=seed_est) for v in X]
             a_s += self.n_trials*[a]
             rs += self.n_trials*[r]
             ns += self.n_trials*[n]
@@ -264,7 +279,7 @@ class Experiment:
 
     def run(self):
         res = Parallel(n_jobs=self.n_jobs)(
-            delayed(self.run_trial)(sample_dist, i + self.seed) for i, sample_dist in tqdm(enumerate(self.dist_prod), total=len(self.dist_a)*len(self.dist_r)*len(self.ns)*len(self.contamination_level))
+            delayed(self.run_trial)(sample_dist, 2*len(self.est_prod)*i + self.seed) for i, sample_dist in tqdm(enumerate(self.dist_prod), total=len(self.dist_a)*len(self.dist_r)*len(self.ns)*len(self.contamination_level))
         )
         dfs = [pl.DataFrame(r) for r in res]
         self.df = pl.concat(dfs)
