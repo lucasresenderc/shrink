@@ -8,6 +8,16 @@ from itertools import product
 import seaborn as sns
 from collections import OrderedDict
 
+key_format_dict = {
+    "n": "$N$",
+    "shrinkage_function": "Shrinkage Function",
+    "delta": r"$\delta$",
+    "contamination_level": r"$\varepsilon$",
+    "base_estimator": r"\widehat{\kappa}",
+    "quantile": "Error",
+    "split_ratio": "Split ratio",
+    "best_m": r"$m^\star$",
+}
 base_estimator_dict = OrderedDict([
     ("mean", "$\overline{X}$"),
     ("median", "$M$"),
@@ -44,6 +54,14 @@ normalized_dict = OrderedDict([
     (False, "unnorm"),
     (True, "norm"),
 ])
+a_distribution_dict = OrderedDict([
+    (np.inf, "Light-tailed"),
+    (1.005, "Heavy-tailed"),
+])
+r_distribution_dict = OrderedDict([
+    (0.0, "Symmetric"),
+    (0.99, "Skewed"),
+])
 formatter_dict = {
     "base_estimator": base_estimator_dict,
     "shrinkage_function": shrinkage_function_dict,
@@ -52,6 +70,8 @@ formatter_dict = {
     "contamination_level": contamination_dict,
     "is_symmetrized": symmetrized_dict,
     "is_normalized": normalized_dict,
+    "a": a_distribution_dict,
+    "r": r_distribution_dict,
 }
 
 
@@ -62,6 +82,8 @@ def format_val(key, val):
         except KeyError:
             return f"${val}$"
     else:
+        if val == np.inf:
+            val = "\\infty"
         return f"${key}={val}$"
 
 
@@ -90,9 +112,16 @@ def line_plot_df(
     df: pl.DataFrame,
     x_key: str,
     y_key: str,
-    graph_key: str,
-    row_subplot_key: str,
-    col_subplot_key: str
+    graph_key: Union[str, List[str]],
+    row_subplot_key: Union[str, List[str]],
+    col_subplot_key: Union[str, List[str]],
+    log_x_scale: bool = False,
+    log_y_scale: bool = False,
+    marker=True,
+    sharey: bool = False,
+    yticks: bool = False,
+    figsize: tuple = (6, 4),
+    fontsize: int = 10,
 ) -> plt.Figure:
     """
     Generates a line plot with a grid of subplots (facets), leveraging
@@ -102,133 +131,148 @@ def line_plot_df(
         df: The input Polars DataFrame.
         x_key: The column name for the X-axis.
         y_key: The column name for the Y-axis.
-        graph_key: The column name used to color/group the individual lines (curves).
-        row_subplot_key: The column name used to create the subplot rows.
-        col_subplot_key: The column name used to create the subplot columns.
+        graph_key: The column name(s) used to color/group the individual lines (curves).
+        row_subplot_key: The column name(s) used to create the subplot rows.
+        col_subplot_key: The column name(s) used to create the subplot columns.
 
     Returns:
         A Matplotlib Figure object.
     """
-    # 1. Identify unique facet keys using Polars' efficient unique method
-    row_keys = sort_key(row_subplot_key, df.get_column(
-        row_subplot_key).unique().to_list())
-    col_keys = sort_key(col_subplot_key, df.get_column(
-        col_subplot_key).unique().to_list())
-    graph_keys = sort_key(graph_key, df.get_column(
-        graph_key).unique().to_list())
+    from itertools import product
+
+    def ensure_list(keys):
+        return keys if isinstance(keys, list) else [keys]
+
+    row_keys_list = [sort_key(k, df.get_column(k).unique().to_list())
+                     for k in ensure_list(row_subplot_key)]
+    col_keys_list = [sort_key(k, df.get_column(k).unique().to_list())
+                     for k in ensure_list(col_subplot_key)]
+    graph_keys_list = [sort_key(k, df.get_column(
+        k).unique().to_list()) for k in ensure_list(graph_key)]
+
+    row_keys = list(product(*row_keys_list))
+    col_keys = list(product(*col_keys_list))
+    graph_keys = list(product(*graph_keys_list))
 
     n_rows = len(row_keys)
     n_cols = len(col_keys)
 
-    # Generate a colormap for consistent colors across the entire plot
     fig, axes = plt.subplots(
         nrows=n_rows,
         ncols=n_cols,
-        figsize=(2.5 * n_cols, 2 * n_rows),
+        figsize=figsize,
         sharex=True,
-        sharey=False  # Independent y-scales
+        sharey=False
     )
 
-    # Handle single row/column case for consistent indexing
     if n_rows == 1 and n_cols == 1:
         axes = np.array([[axes]])
     elif n_rows == 1 or n_cols == 1:
         axes = np.expand_dims(
             axes, axis=0) if n_cols == 1 else np.expand_dims(axes, axis=1)
 
-    # Generate a colormap
     linestyles = ['-', '--', '-.', ':']
     marker_styles = ['o', 's', 'x', '.', '^', 'v']
-    colors = plt.cm.get_cmap('tab10', len(graph_keys))
 
-    # Create unified map for both color and linestyle
+    graph_keys_to_keep = []
+    for graph_val in graph_keys:
+        graph_filter = pl.lit(True)
+        for k, v in zip(ensure_list(graph_key), graph_val):
+            graph_filter &= (pl.col(k) == v)
+        graph_df = df.filter(graph_filter)
+        if graph_df.height > 0:
+            graph_keys_to_keep.append(graph_val)
+    graph_keys = graph_keys_to_keep
+    colors = sns.color_palette()
+
     style_map = {
         key: {
-            'color': colors(i),
+            'color': colors[i],
             'linestyle': linestyles[i % len(linestyles)],
-            'marker': marker_styles[i // len(linestyles)]
+            'marker': marker_styles[i // len(linestyles) % len(marker_styles)] if marker else None
         }
         for i, key in enumerate(graph_keys)
     }
 
-    # 3. Loop through the grid and process/plot the data using Polars
     for i, row_val in enumerate(row_keys):
         for j, col_val in enumerate(col_keys):
             ax = axes[i, j]
 
-            # Polars filtering for the current subplot (facet)
-            facet_df = df.filter(
-                (pl.col(row_subplot_key) == row_val) &
-                (pl.col(col_subplot_key) == col_val)
-            ).sort(x_key)
+            # Build filter for current facet
+            facet_filter = pl.lit(True)
+            for k, v in zip(ensure_list(row_subplot_key), row_val):
+                facet_filter &= (pl.col(k) == v)
+            for k, v in zip(ensure_list(col_subplot_key), col_val):
+                facet_filter &= (pl.col(k) == v)
+
+            facet_df = df.filter(facet_filter).sort(x_key)
             for graph_val in graph_keys:
-                graph_df = facet_df.filter(pl.col(graph_key) == graph_val)
+                graph_filter = pl.lit(True)
+                for k, v in zip(ensure_list(graph_key), graph_val):
+                    graph_filter &= (pl.col(k) == v)
+                graph_df = facet_df.filter(graph_filter)
+                if graph_df.height == 0:
+                    continue
+                label = ', '.join([format_val(k, v) for k, v in zip(
+                    ensure_list(graph_key), graph_val) if format_val(k, v) != "None"])
                 sns.lineplot(data=graph_df, x=x_key, y=y_key, ax=ax,
-                             lw=1.5, label=format_val(graph_key, graph_val), **style_map[graph_val])
+                             lw=1.5, label=label, **style_map[graph_val])
 
-            # 5. Handle axis labels and custom row/col headers
-            # ax.set_yscale("log")
-
-            # **A. Column Subplot Key (Top Row)**
             if i == 0:
-                ax.set_title(format_val(col_subplot_key,
-                                        col_val), fontsize=12)
+                title = ', '.join([format_val(k, v) for k, v in zip(
+                    ensure_list(col_subplot_key), col_val)])
+                ax.set_title(title)
             else:
                 ax.set_title('')
 
-            # **B. Row Subplot Key (Left)**
             if j == 0:
-                # Place Row Label using Y-axis label space, rotated
-                ax.set_ylabel(format_val(row_subplot_key,
-                                         row_val), fontsize=12, weight='bold')
+                ylabel = key_format_dict[y_key]
+                ax.set_ylabel(ylabel)
+            elif j == n_cols-1:
+                ylabel = ', '.join([format_val(k, v) for k, v in zip(
+                    ensure_list(row_subplot_key), row_val)])
+                ax.yaxis.set_label_position("right")
+                ax.set_ylabel(ylabel)
             else:
-                # Remove Y-label from inner columns
                 ax.set_ylabel('')
 
-            # **C. X-axis label (Bottom Row)**
             if i == n_rows - 1:
-                ax.set_xlabel(x_key.replace('_', ' ').title())
+                ax.set_xlabel(key_format_dict[x_key])
             else:
                 ax.set_xlabel('')
 
-            # **D. Ticks and Spine Cleanup**
+            if not yticks or (sharey and j > 0):
+                ax.tick_params(labelleft=False)
 
-            # 1. HIDE NUMERICAL Y-TICK LABELS FOR ALL AXES (THE FIX)
-            # This is applied unconditionally to every ax object.
-            ax.tick_params(labelleft=False)
-
-            # 2. Hide numerical X-tick labels for inner rows (i < n_rows - 1)
             if i < n_rows - 1:
                 ax.tick_params(labelbottom=False)
 
-    # 6. Add the legend and main title at the top
-    # We must get handles/labels from an axis that successfully plotted a line
-    handles, labels = axes[0][0].get_legend_handles_labels()
-    # fig.legend(handles, labels, loc='upper center', ncol=len(
-    #     labels), bbox_to_anchor=(0, .08, 1, 1), frameon=False, fontsize=9)
+            if log_x_scale:
+                ax.set_xscale('log')
+            if log_y_scale:
+                ax.set_yscale('log')
+                if not yticks:
+                    ax.set_yticks([], minor=True)
 
+    handles, labels = axes[0][0].get_legend_handles_labels()
     for ax in axes.flatten():
         ax.get_legend().remove()
 
-    # Legend placement on top
     fig.legend(
         handles,
         labels,
-        title=graph_key.replace('_', ' ').title(),
+        # title=', '.join(ensure_list(graph_key)).replace('_', ' ').title(),
         loc='upper center',
         bbox_to_anchor=(0.5, 1.05),
-        fancybox=True,
-        shadow=True,
+        frameon=False,
         ncol=len(graph_keys)
     )
 
-    # Main title is placed high up
-    fig.suptitle(
-        f"Faceted Line Plot: {y_key} vs {x_key}",
-        fontsize=14, y=1.00
-    )
+    # fig.suptitle(
+    #     f"Faceted Line Plot: {key_format_dict[y_key]} vs {key_format_dict[x_key]}",
+    #     fontsize=14, y=1.00
+    # )
 
-    # 7. Final layout adjustments
     plt.tight_layout(rect=[0.05, 0, 1, 0.95])
 
     return fig
