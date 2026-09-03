@@ -1,4 +1,5 @@
 from itertools import product
+import hashlib
 import json
 from tqdm import tqdm
 import numpy as np
@@ -10,14 +11,17 @@ import polars as pl
 CONTAMINATION = 1e6
 
 
-def introduce_contamination(X, contamination_level, seed=0):
+def introduce_contamination(X, contamination_level, rng):
+    """Replace floor(contamination_level * n) points of X by CONTAMINATION.
+
+    The corrupted positions are drawn from rng on every call, so each trial gets an
+    independent contamination pattern. Drawing them once and reusing them across trials
+    would be harmless for permutation-invariant estimators, but not for the
+    median-of-means, whose buckets are contiguous index blocks.
+    """
     assert len(X.shape) == 1
-    rng = np.random.default_rng(seed)
     n = X.shape[0]
-    # assume contamination is independent across rows
-    indices = np.arange(n)
-    indices = rng.permuted(indices)
-    ix = indices[:int(np.floor(contamination_level * n))]
+    ix = rng.permutation(n)[:int(np.floor(contamination_level * n))]
     result = np.copy(X)
     result[ix] = CONTAMINATION
     return result
@@ -72,8 +76,9 @@ def fetch_moment(sample_dist):
     return 2*a-0.0001 if a <= 1 else 2
 
 
-def est_func(base_est, w, sym, norm, delta, c_eta, x, p, contamination_level, tol=1e-10, seed=0):
-    x = introduce_contamination(x, contamination_level, seed)
+def est_func(base_est, w, sym, norm, delta, c_eta, x, p, contamination_level, tol=1e-10):
+    # x is already contaminated; contamination_level is the (known) level the base
+    # estimator and the shrinkage level eta are tuned against.
     kappa = base_estimators_dict[base_est](
         x, delta, contamination_level)
     assert kappa is not None
@@ -167,10 +172,22 @@ def est_func(base_est, w, sym, norm, delta, c_eta, x, p, contamination_level, to
 
 
 class Experiment:
-    def generate_sample(self, sample_dist, seed):
-        rng = np.random.default_rng(seed)
+    def rng(self, key, stream):
+        """A generator keyed by content rather than by position in the experiment grid.
+
+        Two experiments that touch the same distribution therefore draw the same sample,
+        whatever the shape of the rest of their grid. That is what keeps the tables and
+        the figure mutually consistent: the columns they share are computed on identical
+        data instead of on independent runs that differ by Monte Carlo noise.
+        """
+        digest = hashlib.sha256(f"{self.seed}|{stream}|{key}".encode()).digest()
+        return np.random.default_rng(int.from_bytes(digest[:8], "big"))
+
+    def generate_sample(self, sample_dist):
         a, r, n, contamination_level = sample_dist
-        dist = SkeGTD(a=a, r=r, rng=rng)
+        # the clean sample is keyed on (a, r, n) only, so that every contamination level
+        # corrupts the same underlying data
+        dist = SkeGTD(a=a, r=r, rng=self.rng((a, r, n), "sample"))
 
         X = dist.rvs((self.n_trials, n))
         return X, np.float64(dist.mean())
@@ -190,7 +207,7 @@ class Experiment:
         self.dist_r = dist_r
         self.ns = ns
         self.contamination_level = contamination_level
-        self.dist_prod = product(dist_a, dist_r, ns, contamination_level)
+        self.dist_prod = list(product(dist_a, dist_r, ns, contamination_level))
 
         self.n_trials = n_trials
         self.n_jobs = n_jobs
@@ -204,8 +221,8 @@ class Experiment:
         self.name = specs["name"]
         self.specs_cols = specs["specs_cols"]
 
-    def run_trial(self, sample_dist, seed):
-        X, true_mean = self.generate_sample(sample_dist, seed)
+    def run_trial(self, sample_dist):
+        X, true_mean = self.generate_sample(sample_dist)
         base_estimates = []
         ws = []
         syms = []
@@ -225,10 +242,16 @@ class Experiment:
 
         p = fetch_moment(sample_dist)
 
-        for j, (base_est, w, sym, norm, delta, c_eta) in enumerate(self.est_prod):
-            seed_est = 2*j + seed
+        if contamination_level > 0:
+            # one contamination pattern per trial, shared by every estimator so that they
+            # are all compared on the very same corrupted samples
+            rng = self.rng(sample_dist, "contamination")
+            X = np.stack([introduce_contamination(v, contamination_level, rng)
+                          for v in X])
+
+        for base_est, w, sym, norm, delta, c_eta in self.est_prod:
             estimates += [est_func(base_est, w, sym, norm,
-                                   delta, c_eta, v, p, contamination_level, seed=seed_est) for v in X]
+                                   delta, c_eta, v, p, contamination_level) for v in X]
             a_s += self.n_trials*[a]
             rs += self.n_trials*[r]
             ns += self.n_trials*[n]
@@ -258,7 +281,7 @@ class Experiment:
 
     def run(self):
         res = Parallel(n_jobs=self.n_jobs)(
-            delayed(self.run_trial)(sample_dist, 2*len(self.est_prod)*i + self.seed) for i, sample_dist in tqdm(enumerate(self.dist_prod), total=len(self.dist_a)*len(self.dist_r)*len(self.ns)*len(self.contamination_level))
+            delayed(self.run_trial)(sample_dist) for sample_dist in tqdm(self.dist_prod)
         )
         dfs = [pl.DataFrame(r) for r in res]
         self.df = pl.concat(dfs)

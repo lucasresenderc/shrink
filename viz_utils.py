@@ -9,26 +9,30 @@ import seaborn as sns
 from collections import OrderedDict
 
 key_format_dict = {
-    "n": "$N$",
+    "n": "$n$",
     "shrinkage_function": "Shrinkage Function",
     "delta": r"$\delta$",
     "contamination_level": r"$\varepsilon$",
-    "base_estimator": r"\widehat{\kappa}",
+    "base_estimator": r"$\widehat{\kappa}$",
     "quantile": "Error",
 }
 base_estimator_dict = OrderedDict([
-    ("mean", "$\overline{X}$"),
+    ("mean", r"$\overline{X}$"),
     ("median", "$M$"),
     ("tm", "TM"),
     ("mom", "MoM")
 ])
+# The exponent is written out as 2 because fetch_moment returns p = 2 for every
+# distribution with a finite variance, which is all the paper reports.
+# "none" labels no row of its own: it is the un-shrunk base estimator, and the row is
+# then named after the base estimator instead (see polars_to_latex_table).
 shrinkage_function_dict = OrderedDict([
-    ("none", "None"),
+    ("none", ""),
     ("atm", r"$w(t)=\mathbf{1}_{t<1}$"),
     ("win", r"$w(t)=1\wedge t^{-1}$"),
-    ("lv", r"$w(t)=(1-t^p)_+$"),
-    ("exp", r"$w(t)=e^{-t^p}$"),
-    ("inv", r"$w(t)=(1+t^p)^{-1}$"),
+    ("lv", r"$w(t)=(1-t^2)_+$"),
+    ("exp", r"$w(t)=e^{-t^2}$"),
+    ("inv", r"$w(t)=(1+t^2)^{-1}$"),
     ("ln", r"$w(t)=(\ln(e+t))^{-1}$"),
     ("ln_sq", r"$w(t)=(\ln(e+t^2))^{-1}$"),
     ("sqrt", r"$w(t)=1-\sqrt{1-(1-t)_+^2}$"),
@@ -98,8 +102,11 @@ def sort_key(key, val_list):
 
 def precision_formatter(x: float, n: int) -> str:
     """Formats a float to a string with specified decimal precision."""
-    format_str = f"{{:.{n}f}}"
-    return format_str.format(x)
+    formatted = f"{{:.{n}f}}".format(x)
+    # a value that rounds to zero prints as 0 rather than as -0
+    if formatted.startswith("-") and float(formatted) == 0:
+        return formatted[1:]
+    return formatted
 
 
 def line_plot_df(
@@ -156,7 +163,7 @@ def line_plot_df(
         ncols=n_cols,
         figsize=figsize,
         sharex=True,
-        sharey=False
+        sharey=sharey
     )
 
     if n_rows == 1 and n_cols == 1:
@@ -208,7 +215,7 @@ def line_plot_df(
                 if graph_df.height == 0:
                     continue
                 label = ', '.join([format_val(k, v) for k, v in zip(
-                    ensure_list(graph_key), graph_val) if format_val(k, v) != "None"])
+                    ensure_list(graph_key), graph_val) if format_val(k, v)])
                 sns.lineplot(data=graph_df, x=x_key, y=y_key, ax=ax,
                              lw=1.5, label=label, **style_map[graph_val])
 
@@ -278,12 +285,11 @@ def polars_to_latex_table(
     row_keys: List[str],
     value_key: str,
     highlight_conditions: int = None,
-    colsep: str = "1.5pt",
     reference_row_val=None,
     float_format: int = 2
 ) -> str:
     """
-    Generates a LaTeX table with nested multicolumn headers (up to 3 levels)
+    Generates a LaTeX tabular with nested multicolumn headers (up to 3 levels)
     and nested row groups (up to 2 levels) from a Polars DataFrame.
 
     Args:
@@ -291,12 +297,16 @@ def polars_to_latex_table(
         col_keys: List of column keys (max 3) for nested headers (e.g., ["n", "delta", "p"]).
         row_keys: List of row keys (max 2) for row groups (e.g., ["base_estimator", "shrinkage_function"]).
         value_key: The column containing the numerical/string values for the table entries.
-        highlight_conditions: A dictionary mapping the value column name to a comparison function
-                              for conditional highlighting (e.g., {"metric_value": lambda x: x < -70}).
-                              If None, no highlighting is performed.
+        highlight_conditions: How many entries to bold in each column: k for the k smallest
+                              values, -k for the k largest. If None, no highlighting is
+                              performed.
+        reference_row_val: Row key values identifying the row that entries are expressed
+                           relative to (None in a position means "the current row's own
+                           value"). That row is excluded from both the body and the
+                           highlighting. If None, raw values are printed.
 
     Returns:
-        A string containing the full LaTeX table environment.
+        A string containing the tabular environment, to be placed inside a table float.
     """
     if len(row_keys) > 2 or len(col_keys) > 3:
         return "Error: Function supports at most 2 row_keys and 3 col_keys."
@@ -314,9 +324,7 @@ def polars_to_latex_table(
     total_multicols = np.prod(cols_per_key[:-1])
 
     table_str = ""
-    table_str += "\\begin{table}[ht]\n\\centering\n"
-    table_str += f"\\setlength{{\\tabcolsep}}{{{colsep}}}\n"
-    table_str += "\\begin{tabular*}{0.95\\textwidth}{l@{\extracolsep{\\fill}}"
+    table_str += "\\begin{tabular}{l@{\\extracolsep{\\fill}}"
     table_str += total_multicols*f"|{'c'*cols_per_key[-1]}"
     table_str += "}\n"
     for i, col in enumerate(col_keys):
@@ -336,9 +344,22 @@ def polars_to_latex_table(
         table_str += "\\\\\n"
     table_str += "\\hline\n"
 
-    row_key_prod = list(product(
+    def is_reference_row(row_combo):
+        """The row the other rows are expressed relative to.
+
+        Its own entry is 0 by construction, so it is neither shown nor allowed to take
+        one of the highlighted places -- otherwise a base estimator that beats every
+        shrinkage function silently eats a slot and the column shows one bold instead of
+        `highlight_conditions` of them.
+        """
+        if reference_row_val is None:
+            return False
+        return all(val is None or row_combo[i] == val
+                   for i, val in enumerate(reference_row_val))
+
+    row_key_prod = [rc for rc in product(
         *[sort_key(key, df[key].unique().to_list()) for key in row_keys]
-    ))
+    ) if not is_reference_row(rc)]
     col_key_prod = list(product(
         *[sort_key(key, df[key].unique().to_list()) for key in col_keys]
     ))
@@ -349,6 +370,12 @@ def polars_to_latex_table(
             for i in range(len(col_keys)):
                 filter &= pl.col(col_keys[i]) == col_combo[i]
             filtered_df = df.filter(filter)
+            if reference_row_val is not None:
+                reference_filter = pl.lit(True)
+                for i, val in enumerate(reference_row_val):
+                    if val is not None:
+                        reference_filter &= (pl.col(row_keys[i]) == val)
+                filtered_df = filtered_df.filter(~reference_filter)
             filtered_df = filtered_df.sort(value_key, descending=highlight_conditions < 0)[
                 :abs(highlight_conditions)]
             structs = filtered_df.select(pl.struct(row_keys).alias("row_keys"))[
@@ -362,10 +389,13 @@ def polars_to_latex_table(
         row_val2 = row_combo[1] if len(row_keys) > 1 else None
         if row_val2 is not None and (row_val1 != old_row_val1 and old_row_val1 is not None):
             table_str += "\\hline\n"
-        row_label = " ".join(
-            [format_val(row_keys[i], row_combo[i])
-             for i in range(len(row_keys))]
-        )
+        # Label a row by its most specific non-empty part: a shrunk estimator is named
+        # after its shrinkage function, and the un-shrunk one (whose shrinkage label is
+        # empty) after the base estimator heading its block.
+        row_labels = [format_val(row_keys[i], row_combo[i])
+                      for i in range(len(row_keys))]
+        row_labels = [label for label in row_labels if label]
+        row_label = row_labels[-1] if row_labels else ""
         table_str += f"{row_label}"
         for col_combo in col_key_prod:
             row_filter_condition = pl.lit(True)
@@ -406,6 +436,5 @@ def polars_to_latex_table(
         table_str += " \\\\\n"
         old_row_val1 = row_val1
     table_str += "\\hline\n"
-    table_str += "\\end{tabular*}\n"
-    table_str += "\\end{table}\n"
+    table_str += "\\end{tabular}\n"
     return table_str
