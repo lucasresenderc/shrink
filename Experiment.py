@@ -72,34 +72,17 @@ def fetch_moment(sample_dist):
     return 2*a-0.0001 if a <= 1 else 2
 
 
-def est_func(base_est, w, sym, norm, delta, c_eta, split, x, p, contamination_level, tol=1e-10, seed=0):
-    seed_rng = np.random.default_rng(seed)
-    if split is None or w is None:
-        x = introduce_contamination(x, contamination_level, seed)
-        kappa = base_estimators_dict[base_est](
-            x, delta, contamination_level)
-    else:
-        if isinstance(split, float):
-            split_idx = int(len(x)*split)
-        elif isinstance(split, int):
-            split_idx = split
-        else:
-            raise ValueError(
-                "Split must be either float or int.")
-        base_est_x = introduce_contamination(
-            x[:split_idx], contamination_level, seed)
-        kappa = base_estimators_dict[base_est](
-            base_est_x, delta, contamination_level)
+def est_func(base_est, w, sym, norm, delta, c_eta, x, p, contamination_level, tol=1e-10, seed=0):
+    x = introduce_contamination(x, contamination_level, seed)
+    kappa = base_estimators_dict[base_est](
+        x, delta, contamination_level)
     assert kappa is not None
     assert np.isfinite(kappa)
     if w is None:
         return kappa
     else:
-        if split is None:
-            shrink_x = x
-        else:
-            shrink_x = introduce_contamination(
-                x[split_idx:], contamination_level, seed+1)
+        # both the base estimate and the shrinkage use the whole sample
+        shrink_x = x
         w_func = partial(shrinkage_functions_dict[w], p=p)
         # solve alpha such that
         # n - eta - 1 < sum rho(alpha |x - kappa|^p) <= n - eta
@@ -126,7 +109,7 @@ def est_func(base_est, w, sym, norm, delta, c_eta, split, x, p, contamination_le
                     new_a = (a + A)/2
                 if abs(n-eta-np.sum(w_func(new_a * D))) > tolerance_dict[w]:
                     raise ValueError(
-                        f"Did not converge properly for w={w}, sym={sym}, norm={norm}, delta={delta}, c_eta={c_eta}, split={split}, contamination_level={contamination_level}, shrink_n={n}, eta={eta}, sum_weights={np.sum(w_func(new_a * D))}, a={a}, A={A}, new_a={new_a}, sum_a={np.sum(w_func(a * D))}, sum_A={np.sum(w_func(A * D))}")
+                        f"Did not converge properly for w={w}, sym={sym}, norm={norm}, delta={delta}, c_eta={c_eta}, contamination_level={contamination_level}, shrink_n={n}, eta={eta}, sum_weights={np.sum(w_func(new_a * D))}, a={a}, A={A}, new_a={new_a}, sum_a={np.sum(w_func(a * D))}, sum_A={np.sum(w_func(A * D))}")
                 W = w_func(new_a * D)
 
             else:
@@ -192,7 +175,7 @@ class Experiment:
         X = dist.rvs((self.n_trials, n))
         return X, np.float64(dist.mean())
 
-    def __init__(self, name, base_estimators, shrinkage_function, symmetrized, normalized, deltas, c_etas, splits, dist_a, dist_r, ns, contamination_level, n_trials, seed=0, n_jobs=1):
+    def __init__(self, name, base_estimators, shrinkage_function, symmetrized, normalized, deltas, c_etas, dist_a, dist_r, ns, contamination_level, n_trials, seed=0, n_jobs=1):
         self.name = name
         self.base_estimators = base_estimators
         self.shrinkage_function = shrinkage_function
@@ -200,9 +183,8 @@ class Experiment:
         self.normalized = normalized
         self.deltas = deltas
         self.c_etas = c_etas
-        self.splits = splits
         self.est_prod = list(product(base_estimators, shrinkage_function,
-                                     symmetrized, normalized, deltas, c_etas, splits))
+                                     symmetrized, normalized, deltas, c_etas))
 
         self.dist_a = dist_a
         self.dist_r = dist_r
@@ -230,7 +212,6 @@ class Experiment:
         norms = []
         deltas = []
         c_etas = []
-        splits = []
         estimates = []
         a_s = []
         rs = []
@@ -244,10 +225,10 @@ class Experiment:
 
         p = fetch_moment(sample_dist)
 
-        for j, (base_est, w, sym, norm, delta, c_eta, split) in enumerate(self.est_prod):
+        for j, (base_est, w, sym, norm, delta, c_eta) in enumerate(self.est_prod):
             seed_est = 2*j + seed
             estimates += [est_func(base_est, w, sym, norm,
-                                   delta, c_eta, split, v, p, contamination_level, seed=seed_est) for v in X]
+                                   delta, c_eta, v, p, contamination_level, seed=seed_est) for v in X]
             a_s += self.n_trials*[a]
             rs += self.n_trials*[r]
             ns += self.n_trials*[n]
@@ -258,7 +239,6 @@ class Experiment:
             norms += self.n_trials*[norm]
             deltas += self.n_trials*[delta]
             c_etas += self.n_trials*[c_eta]
-            splits += self.n_trials*[split]
             true_means += self.n_trials*[true_mean]
 
         return {
@@ -272,7 +252,6 @@ class Experiment:
             "is_normalized": norms,
             "delta": deltas,
             "c_eta": c_etas,
-            "split_ratio": splits,
             "estimates": estimates,
             "true_mean": true_means,
         }

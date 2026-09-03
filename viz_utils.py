@@ -15,8 +15,6 @@ key_format_dict = {
     "contamination_level": r"$\varepsilon$",
     "base_estimator": r"\widehat{\kappa}",
     "quantile": "Error",
-    "split_ratio": "Split ratio",
-    "best_m": r"$m^\star$",
 }
 base_estimator_dict = OrderedDict([
     ("mean", "$\overline{X}$"),
@@ -42,9 +40,6 @@ distribution_dict = OrderedDict([
     ("a=1.005,r=0.0", "T"),
     ("a=1.005,r=0.99", "ST"),
 ])
-split_ratio_dict = OrderedDict([
-    ("none", "No split"),
-])
 contamination_dict = OrderedDict([])
 symmetrized_dict = OrderedDict([
     (False, "asym"),
@@ -66,7 +61,6 @@ formatter_dict = {
     "base_estimator": base_estimator_dict,
     "shrinkage_function": shrinkage_function_dict,
     "distribution": distribution_dict,
-    "split_ratio": split_ratio_dict,
     "contamination_level": contamination_dict,
     "is_symmetrized": symmetrized_dict,
     "is_normalized": normalized_dict,
