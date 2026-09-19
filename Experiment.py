@@ -45,12 +45,59 @@ base_estimators_dict = {
     "tm": lambda X, delta, eps: get_tm(X, int(np.ceil(np.log(1/delta))+eps*len(X))),
 }
 
+# --- weight functions of the classical robust estimators listed in tab:weights ---
+# The estimators are invariant to the scale of w (w(lambda t) gives the same estimator for
+# any lambda > 0), so the two parameterised families below are normalised: only the ratios
+# between their tuning constants matter.
+#
+# Hampel's three-part function: the classical tuning constants (a, b, c) are proportional to
+# (2, 4, 8), which is (1, 2, 4) once the scale is fixed by a = 1.
+HAMPEL_A, HAMPEL_B, HAMPEL_C = 1.0, 2.0, 4.0
+# Hampel-Rousseeuw-Ronchetti's tanh function: given a rejection point c and a bound k on the
+# change-of-variance sensitivity, (A, B, d) are the unique solution of
+#   A = E_Phi[psi'],  B = E_Phi[psi^2],  psi(d) = d   (continuity of psi at the end of the
+# plateau), where psi(t) = t w(t). Solved numerically for (k, c) = (4.5, 4).
+TANH_K, TANH_C = 4.5, 4.0
+TANH_AA, TANH_BB, TANH_D = 0.940935, 0.848462, 1.770397
+_TANH_S = np.sqrt(TANH_AA * (TANH_K - 1))
+_TANH_Q = 0.5 * np.sqrt((TANH_K - 1) * TANH_AA / TANH_BB)
+
+
+def _safe_div(num, t):
+    """num / t, returning 0 where t == 0. Only ever called where the result is masked out."""
+    return np.divide(num, t, out=np.zeros_like(np.asarray(t, dtype=float)),
+                     where=np.asarray(t) > 0)
+
+
+def _hampel(t, p):
+    a, b, c = HAMPEL_A, HAMPEL_B, HAMPEL_C
+    return np.where(t <= a, 1.0,
+                    np.where(t <= b, _safe_div(a, t),
+                             np.where(t <= c, _safe_div(a * (c - t), t * (c - b)), 0.0)))
+
+
+def _tanh(t, p):
+    tail = _safe_div(_TANH_S * np.tanh(_TANH_Q * np.clip(TANH_C - t, 0.0, None)), t)
+    return np.where(t <= TANH_D, 1.0, np.where(t <= TANH_C, tail, 0.0))
+
+
 shrinkage_functions_dict = {
     "lv": lambda t, p: (1 - t**p)*(t <= 1),
     "atm": lambda t, p: 1*(t <= 1),
     "win": lambda t, p: 1*(t <= 1) + np.nan_to_num((t > 1)/t),
     "exp": lambda t, p: np.exp(-t**p),
     "inv": lambda t, p: 1/(t**p + 1),
+    # Polynomial near the origin like "lv"/"inv", but with the 1/t tail of the
+    # Winsorized mean: sup_t t*w(t) = limsup_t t*w(t) = 1, the slowest decay
+    # assum:malpha_finite allows. Satisfies (1-t^p)_+ <= w(t) <= 1 ^ t^-1.
+    "inv_root": lambda t, p: (1 + t**p)**(-1/p),
+    # classical robust estimators (tab:weights). Tukey and Andrews have no plateau, so
+    # they satisfy assum:rho_bound only for p in (1, 2]; Hampel and tanh do have one, so
+    # they satisfy it for every p > 1. All four satisfy assum:malpha_finite.
+    "tukey": lambda t, p: ((1 - t**2)*(t <= 1))**2,
+    "andrews": lambda t, p: np.sinc(t)*(t <= 1),
+    "hampel": _hampel,
+    "tanh": _tanh,
     # shrinkage functions that violate assumptions
     "ln_sq": lambda t, p: 1/np.log(np.e + t**2),
     "ln": lambda t, p: 1/np.log(np.e + t),
@@ -64,6 +111,11 @@ tolerance_dict = {
     "win": 0.1,
     "exp": 0.1,
     "inv": 0.1,
+    "inv_root": 0.1,
+    "tukey": 0.1,
+    "andrews": 0.1,
+    "hampel": 0.1,
+    "tanh": 0.1,
     "ln": 0.1,
     "ln_sq": 0.1,
     "sqrt": 0.1,

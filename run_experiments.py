@@ -9,7 +9,8 @@ import numpy as np
 exp1 = Experiment(
     name="is_shrinkage_good",
     base_estimators=["mean", "median", "mom", "tm"],
-    shrinkage_function=[None, "lv", "atm", "win", "exp", "inv"],
+    shrinkage_function=[None, "lv", "atm", "win", "exp", "inv", "inv_root",
+                        "tukey", "andrews", "hampel", "tanh"],
     symmetrized=[False],
     normalized=[False],
     deltas=[5e-2],
@@ -27,7 +28,8 @@ exp1.compute_metrics()
 exp2 = Experiment(
     name="contamination_robustness",
     base_estimators=["mean", "median", "mom", "tm"],
-    shrinkage_function=[None, "lv", "atm", "win", "exp", "inv"],
+    shrinkage_function=[None, "lv", "atm", "win", "exp", "inv", "inv_root",
+                        "tukey", "andrews", "hampel", "tanh"],
     symmetrized=[False],
     normalized=[False],
     deltas=[5e-2],
@@ -41,12 +43,14 @@ exp2 = Experiment(
 )
 exp2.run()
 exp2.compute_metrics()
-# Table 3. Repeats "win" and "inv" so that the assumption-violating shrinkage functions
-# can be read against compliant ones on the same samples.
+# Table 3. Repeats every shrinkage function of exp1 so that the assumption-violating ones
+# are read against the full set of compliant ones, on the same samples.
 exp3 = Experiment(
     name="bad_shrinkage",
     base_estimators=["mean", "median", "mom", "tm"],
-    shrinkage_function=[None, "win", "inv", "ln", "ln_sq", "sqrt", "inv_sqrt"],
+    shrinkage_function=[None, "lv", "atm", "win", "exp", "inv", "inv_root",
+                        "tukey", "andrews", "hampel", "tanh",
+                        "ln", "ln_sq", "sqrt", "inv_sqrt"],
     symmetrized=[False],
     normalized=[False],
     deltas=[5e-2],
