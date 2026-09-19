@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Figures for section 8.3: one unimodal skewed law and one bimodal heavy-tailed law."""
+"""Figures for section 8.3: a Gaussian, a skewed unimodal law, and a bimodal heavy-tailed law."""
 import csv, collections
 import numpy as np
 import matplotlib as mpl
@@ -8,7 +8,9 @@ from matplotlib.lines import Line2D
 from matplotlib.ticker import FixedLocator, LogLocator, NullFormatter, ScalarFormatter
 
 INK, MUTED, GRID, SPINE, REF = "#0b0b0b", "#52514e", "#e6e5e0", "#c3c2b7", "#8f8e88"
-COLS = [("SN", "skewed Gaussian, one mode"), ("T2", r"Student $t$ (2.01), two modes")]
+COLS = [("N", "Gaussian, one mode"),
+        ("SN", "skewed Gaussian, one mode"),
+        ("T2", r"Student $t$ (2.01), two modes")]
 # Okabe–Ito blue / vermillion: darker than the previous pair, so they stay
 # separable from the grey baselines and from each other in print and deuteranopia
 SERIES = [("hampel", "Hampel (3-part)", "#0072B2", "solid"),
@@ -20,7 +22,7 @@ REFS = [("mean", "sample mean", (0, (1, 1.6))),
         ("median", "sample median", (0, (5, 2))),
         ("tm", "trimmed mean", "solid")]
 KMAX = 5
-FIGSIZE = (6.0, 2.1)
+FIGSIZE = (8.5, 2.1)
 
 mpl.rcParams.update({
     "font.family": "sans-serif", "font.sans-serif": ["Helvetica", "Arial", "DejaVu Sans"],
@@ -48,18 +50,6 @@ for r in csv.DictReader(open("reference.csv")):
 KS = list(range(KMAX + 1))
 
 
-def place(ys, lo, hi, frac=0.085):
-    """Push label heights apart in log space; the gap is a fixed fraction of the panel."""
-    gap = frac * np.log10(hi / lo)
-    out = np.log10(np.array(ys, dtype=float))
-    order = np.argsort(out)
-    for i in range(1, len(order)):
-        a, b = order[i - 1], order[i]
-        if out[b] - out[a] < gap:
-            out[b] = out[a] + gap
-    return 10.0 ** out
-
-
 def style(ax):
     ax.set_axisbelow(True)
     ax.grid(axis="y", color=GRID, lw=0.6)
@@ -71,16 +61,18 @@ def style(ax):
 
 
 def new_fig():
-    fig, axes = plt.subplots(1, 2, figsize=FIGSIZE, dpi=200, sharex=True,
+    fig, axes = plt.subplots(1, len(COLS), figsize=FIGSIZE, dpi=200, sharex=True,
                              gridspec_kw=dict(wspace=0.28))
     return fig, axes
 
 
-def finish(fig, path):
+def finish(fig, path, extra_handles=None):
     handles = [Line2D([], [], color=c, ls=dd, lw=1.6, label=l) for _w, l, c, dd in SERIES]
-    fig.legend(handles=handles, loc="upper center", bbox_to_anchor=(0.5, 1.08), ncol=2,
-               frameon=False, fontsize=7, handlelength=2.6, columnspacing=2.0,
-               labelcolor=MUTED, borderpad=0)
+    if extra_handles:
+        handles = handles + extra_handles
+    fig.legend(handles=handles, loc="upper center", bbox_to_anchor=(0.5, 1.08),
+               ncol=len(handles), frameon=False, fontsize=7, handlelength=2.6,
+               columnspacing=1.6, labelcolor=MUTED, borderpad=0)
     # axes stop at 0.84 so a white band sits between the legend and the titles
     fig.tight_layout(pad=0.2, w_pad=0.3, rect=(0, 0, 1, 0.84))
     fig.savefig(f"{path}.pdf", bbox_inches="tight", pad_inches=0)
@@ -106,7 +98,7 @@ for j, (d, title) in enumerate(COLS):
     ax.xaxis.set_major_locator(FixedLocator(KS))
     lv = rvals + [A[(d, w, st)][k] for w, *_ in SERIES for st, _ in STARTS
                   for k in range(2, KMAX + 1)]
-    ax.set_ylim(0.80 * min(lv), 1.15 * max(rvals))
+    ax.set_ylim(0.95 * min(lv), 1.05 * max(rvals))
     ax.yaxis.set_major_locator(LogLocator(base=10, subs=(1, 2, 5), numticks=12))
     ax.yaxis.set_major_formatter(ScalarFormatter())
     ax.yaxis.set_minor_formatter(NullFormatter())
@@ -114,16 +106,9 @@ for j, (d, title) in enumerate(COLS):
     if j == 0:
         ax.set_ylabel(r"$(1-\delta)$-quantile of $|\kappa_k-\mu|/\nu_2$" "\n"
                       r"against the iteration index")
-    lo_, hi_ = ax.get_ylim()
-    low = int(np.argmin(rvals))          # its label goes *below* the line: the plateau sits
-    rest = [i for i in range(len(REFS)) if i != low]   # just above it and would collide
-    ax.annotate(REFS[low][1], (0.06, rvals[low]), color=MUTED, fontsize=5.5,
-                ha="left", va="top", xytext=(0, -1.6), textcoords="offset points")
-    for i, y in zip(rest, place([rvals[i] for i in rest], lo_, hi_)):
-        ax.annotate(REFS[i][1], (0.06, y), color=MUTED, fontsize=5.5, ha="left",
-                    va="bottom", xytext=(0, 1.6), textcoords="offset points")
 
-finish(fig, "fig_fixed_point")
+ref_handles = [Line2D([], [], color=REF, ls=ls, lw=1.0, label=nm) for _e, nm, ls in REFS]
+finish(fig, "fig_fixed_point", extra_handles=ref_handles)
 
 # --- within-sample distance / nu2 ------------------------------------------------------
 fig, axes = new_fig()
