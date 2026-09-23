@@ -7,6 +7,7 @@ from typing import Union
 from itertools import product
 import seaborn as sns
 from collections import OrderedDict
+from matplotlib.ticker import FixedLocator, FuncFormatter, NullLocator
 
 key_format_dict = {
     "n": "$n$",
@@ -48,6 +49,12 @@ distribution_dict = OrderedDict([
     ("a=inf,r=0.99", "SN"),
     ("a=1.005,r=0.0", "T"),
     ("a=1.005,r=0.99", "ST"),
+])
+distribution_figure_title_dict = OrderedDict([
+    ("a=inf,r=0.0", "Normal"),
+    ("a=inf,r=0.99", "Skewed Normal"),
+    ("a=1.005,r=0.0", "Student's t"),
+    ("a=1.005,r=0.99", "Skewed Student's t"),
 ])
 contamination_dict = OrderedDict([])
 symmetrized_dict = OrderedDict([
@@ -160,8 +167,29 @@ def line_plot_df(
     col_keys = list(product(*col_keys_list))
     graph_keys = list(product(*graph_keys_list))
 
-    n_rows = len(row_keys)
-    n_cols = len(col_keys)
+    n_facet_rows = len(row_keys)
+    n_facet_cols = len(col_keys)
+    n_rows = 1
+    n_cols = n_facet_rows * n_facet_cols
+
+    def facet_title(row_val, col_val):
+        row_k = ensure_list(row_subplot_key)
+        col_k = ensure_list(col_subplot_key)
+        params = dict(zip(row_k, row_val))
+        params.update(zip(col_k, col_val))
+        if "a" in params and "r" in params:
+            a, r = params["a"], params["r"]
+            a_str = "inf" if a == np.inf else str(a)
+            dist_key = f"a={a_str},r={r}"
+            if dist_key in distribution_figure_title_dict:
+                return distribution_figure_title_dict[dist_key]
+            if dist_key in distribution_dict:
+                return distribution_dict[dist_key]
+        parts = [
+            format_val(k, v)
+            for k, v in list(zip(row_k, row_val)) + list(zip(col_k, col_val))
+        ]
+        return ", ".join(p for p in parts if p)
 
     fig, axes = plt.subplots(
         nrows=n_rows,
@@ -173,9 +201,12 @@ def line_plot_df(
 
     if n_rows == 1 and n_cols == 1:
         axes = np.array([[axes]])
-    elif n_rows == 1 or n_cols == 1:
-        axes = np.expand_dims(
-            axes, axis=0) if n_cols == 1 else np.expand_dims(axes, axis=1)
+    elif n_rows == 1:
+        axes = np.asarray(axes).reshape(1, n_cols)
+    elif n_cols == 1:
+        axes = np.asarray(axes).reshape(n_rows, 1)
+    else:
+        axes = np.asarray(axes)
 
     linestyles = ['-', '--', '-.', ':']
     marker_styles = ['o', 's', 'x', '.', '^', 'v']
@@ -202,20 +233,21 @@ def line_plot_df(
 
     for i, row_val in enumerate(row_keys):
         for j, col_val in enumerate(col_keys):
-            ax = axes[i, j]
+            col_idx = i * n_facet_cols + j
+            ax = axes[0, col_idx]
 
             # Build filter for current facet
             facet_filter = pl.lit(True)
-            for k, v in zip(ensure_list(row_subplot_key), row_val):
-                facet_filter &= (pl.col(k) == v)
-            for k, v in zip(ensure_list(col_subplot_key), col_val):
-                facet_filter &= (pl.col(k) == v)
+            for key, v in zip(ensure_list(row_subplot_key), row_val):
+                facet_filter &= (pl.col(key) == v)
+            for key, v in zip(ensure_list(col_subplot_key), col_val):
+                facet_filter &= (pl.col(key) == v)
 
             facet_df = df.filter(facet_filter).sort(x_key)
             for graph_val in graph_keys:
                 graph_filter = pl.lit(True)
-                for k, v in zip(ensure_list(graph_key), graph_val):
-                    graph_filter &= (pl.col(k) == v)
+                for key, v in zip(ensure_list(graph_key), graph_val):
+                    graph_filter &= (pl.col(key) == v)
                 graph_df = facet_df.filter(graph_filter)
                 if graph_df.height == 0:
                     continue
@@ -224,41 +256,46 @@ def line_plot_df(
                 sns.lineplot(data=graph_df, x=x_key, y=y_key, ax=ax,
                              lw=1.5, label=label, **style_map[graph_val])
 
-            if i == 0:
-                title = ', '.join([format_val(k, v) for k, v in zip(
-                    ensure_list(col_subplot_key), col_val)])
-                ax.set_title(title)
-            else:
-                ax.set_title('')
+            ax.set_title(facet_title(row_val, col_val))
 
-            if j == 0:
-                ylabel = key_format_dict[y_key]
-                ax.set_ylabel(ylabel)
-            elif j == n_cols-1:
-                ylabel = ', '.join([format_val(k, v) for k, v in zip(
-                    ensure_list(row_subplot_key), row_val)])
-                ax.yaxis.set_label_position("right")
-                ax.set_ylabel(ylabel)
+            if col_idx == 0:
+                ax.set_ylabel(key_format_dict[y_key])
             else:
                 ax.set_ylabel('')
 
-            if i == n_rows - 1:
-                ax.set_xlabel(key_format_dict[x_key])
-            else:
-                ax.set_xlabel('')
-
-            if not yticks or (sharey and j > 0):
-                ax.tick_params(labelleft=False)
-
-            if i < n_rows - 1:
-                ax.tick_params(labelbottom=False)
+            ax.set_xlabel(key_format_dict[x_key])
 
             if log_x_scale:
                 ax.set_xscale('log')
             if log_y_scale:
                 ax.set_yscale('log')
-                if not yticks:
-                    ax.set_yticks([], minor=True)
+
+            if yticks:
+                y_vals = facet_df.get_column(y_key).to_numpy()
+                if y_vals.size:
+                    ymin = float(np.min(y_vals))
+                    ymax = float(np.max(y_vals))
+                    if ymin == ymax:
+                        pad = abs(ymin) * 0.1 if ymin else 1e-6
+                        ymin, ymax = ymin - pad, ymax + pad
+                    span = ymax - ymin
+                    tick_vals = sorted([
+                        round(ymin + 0.2 * span, 2),
+                        round(ymin + 0.8 * span, 2),
+                    ])
+                    ax.yaxis.set_major_locator(FixedLocator(tick_vals))
+                    ax.yaxis.set_major_formatter(
+                        FuncFormatter(lambda y, _: f"{y:.2f}")
+                    )
+                    ax.set_yticklabels(
+                        [f"{v:.2f}" for v in tick_vals], rotation=90
+                    )
+                    ax.yaxis.set_minor_locator(NullLocator())
+                ax.tick_params(axis='y', labelleft=True)
+            elif sharey and col_idx > 0:
+                ax.tick_params(labelleft=False)
+            if log_y_scale and not yticks:
+                ax.set_yticks([], minor=True)
 
     handles, labels = axes[0][0].get_legend_handles_labels()
     for ax in axes.flatten():

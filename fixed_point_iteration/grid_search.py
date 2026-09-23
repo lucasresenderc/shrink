@@ -16,7 +16,7 @@ from joblib import Parallel, delayed
 
 sys.path.insert(0, "..")
 from Experiment import shrinkage_functions_dict          # noqa: E402
-from fixed_point_experiment import (ETA, N, DISTS, WEIGHTS, alpha_hat, draw,  # noqa: E402
+from fixed_point_iteration.fixed_point_experiment import (ETA, N, DISTS, WEIGHTS, alpha_hat, draw,  # noqa: E402
                                     moments, BracketFailure)
 
 T_GRID = 1000

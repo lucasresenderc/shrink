@@ -120,8 +120,9 @@ for j, (d, title) in enumerate(COLS):
         ax.fill_between(KS, p50, p99, color=col, alpha=0.18, lw=0, zorder=2)
         ax.plot(KS, p50, color=col, lw=1.6, ls=dash, zorder=3)
         tint = tuple(0.30 + 0.70 * c for c in mpl.colors.to_rgb(col))
-        ax.plot(KS, [P[(d, w)][k][0] for k in KS], color=tint, lw=1.4,
-                ls=(0, (3.5, 1.8)), zorder=4)
+        c50 = [P[(d, w)][k][0] for k in KS]; c99 = [P[(d, w)][k][1] for k in KS]
+        ax.fill_between(KS, c50, c99, color=tint, alpha=0.22, lw=0, zorder=3)
+        ax.plot(KS, c50, color=tint, lw=1.4, ls=(0, (3.5, 1.8)), zorder=4)
     ax.set_yscale("log")
     ax.set_title(title, color=INK)
     ax.set_xlabel(r"iteration $k$")
